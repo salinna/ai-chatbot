@@ -1,3 +1,14 @@
+// `\
+//     You are a family law conversation bot called Motics Legal AI and you can help users with queries related to family law, step by step.
+//     You and the user can discuss various family law topics such as divorce, child custody, alimony, and property division.
+    
+//     Messages inside [] means that it's a UI element or a user event. For example:
+//     - "[User has asked about child custody laws]" means that an interface showing information about child custody laws is shown to the user.
+//     - "[User has requested information on filing for divorce]" means that the user has requested information on the process of filing for divorce.
+    
+//     If the user asks for legal representation or any service beyond providing information, respond that you are a demo and cannot provide such services.
+    
+//     Besides that, you can also chat with users and do some calculations if needed.`
 import 'server-only'
 
 import {
@@ -9,6 +20,8 @@ import {
   createStreamableValue
 } from 'ai/rsc'
 import { openai } from '@ai-sdk/openai'
+import { generateText } from 'ai';
+import { queryVector } from '../pinecone/pineconeUtils'
 
 import {
   spinner,
@@ -18,6 +31,7 @@ import {
   Stock,
   Purchase
 } from '@/components/stocks'
+import { OpenAIEmbeddings } from "@langchain/openai";
 
 import { z } from 'zod'
 import { EventsSkeleton } from '@/components/stocks/events-skeleton'
@@ -106,11 +120,41 @@ async function confirmPurchase(symbol: string, price: number, amount: number) {
   }
 }
 
+// async function summarizeText(text: string): Promise<string> {
+//   const summaryResult = await openai.completion('gpt-3.5-turbo'),{
+//     prompt: `Summarize the following text:\n\n${text}`,
+//     max_tokens: 2000, // Adjust this as needed
+//     temperature: 0.3,
+//   });
+//   return summaryResult.choices[0].text.trim();
+// }
+
+async function summarizeText(text: string): Promise<string> {
+  console.log("Summarizing text... ");
+  const { text: summary } = await generateText({
+    model: openai('gpt-3.5-turbo'),
+    prompt: `Summarize the following text:\n\n${text}`,
+    maxTokens: 500, 
+    temperature: 0.3,
+  });
+  return summary.trim();
+}
+
+// Function to truncate text to a certain number of tokens
+function truncateText(text: string, maxTokens: number): string {
+  const words = text.split(' ');
+  if (words.length > maxTokens) {
+    return words.slice(0, maxTokens).join(' ') + '...';
+  }
+  return text;
+}
+
 async function submitUserMessage(content: string) {
-  'use server'
+  'use server';
 
-  const aiState = getMutableAIState<typeof AI>()
+  const aiState = getMutableAIState<typeof AI>();
 
+  // Update AI state with the new user message
   aiState.update({
     ...aiState.get(),
     messages: [
@@ -118,47 +162,83 @@ async function submitUserMessage(content: string) {
       {
         id: nanoid(),
         role: 'user',
-        content
-      }
-    ]
-  })
+        content,
+      },
+    ],
+  });
 
-  let textStream: undefined | ReturnType<typeof createStreamableValue<string>>
-  let textNode: undefined | React.ReactNode
+  let textStream: undefined | ReturnType<typeof createStreamableValue<string>>;
+  let textNode: undefined | React.ReactNode;
+
+  // Generate embedding for the user query
+  const embeddings = new OpenAIEmbeddings({
+    model: 'text-embedding-3-large',
+  });
+  const queryEmbedding = await embeddings.embedQuery(content);
+  // console.log("queryEmbedding: ", queryEmbedding);
+
+  // // Query Pinecone with the user's query embedding
+  const pineconeResults = await queryVector(queryEmbedding, 5, {});
+  console.log("pineconeResults: ", pineconeResults);
+
+  // Concatenate the page content from Pinecone results
+  const concatenatedPageContent = pineconeResults
+    .map(([document]) => document.pageContent || '')
+    .join(" ");
+  console.log("concatenatedPageContent: ", concatenatedPageContent);
+
+  // Calculate the token count of the existing messages
+  const existingMessages = aiState.get().messages.map(message => message.content).join(' ');
+  const existingTokenCount = existingMessages.split(' ').length;
+
+  // Ensure the combined text is within token limits
+  const maxTokens = 8192 - 1000 - existingTokenCount; // Reserve tokens for the prompt and response
+  let combinedText = concatenatedPageContent;
+
+  if (combinedText.split(' ').length > maxTokens) {
+    combinedText = await summarizeText(combinedText);
+    if (combinedText.split(' ').length > maxTokens) {
+      combinedText = truncateText(combinedText, maxTokens);
+    }
+  }
+
+  // Use OpenAI to generate a response with the retrieved texts as context
+  const prompt = `You are a helpful legal AI assistant called Motics Legal AI speaking with qualified legal professionals. Use the following pieces of context to answer the question at the end.
+  If you think that the user needs to consult local legal guidelines, then you must remember that you have access to the local legal handbook in its entirety and should search for the answer within the context.
+  Use the context as best you can to directly answer the question and be clear in your thought process. Only use the context to answer the question.
+  As you are an autoregressive language model that has been fine-tuned with instruction-tuning and RLHF. You carefully provide accurate, factual, thoughtful, nuanced answers, and are brilliant at reasoning. If you think there might not be a correct answer, you say so.
+  Provide detailed answers with relevant context, and specific recommendations and numbers when relevant.
+  You must always state from which section of the legal handbook you obtained the context to generate your answer - be specific.
+  If you don't know the answer or cannot find it, say you don't know. DO NOT try to make up an answer as this may cause harm.
+  If the question is not related to the context, politely respond that you are tuned to only answer questions that are related to the context.
+  If relevant, list relevant reference documents with a reference to the section at the end of your response so that the user can find the information.
+  Context:
+  ${combinedText}`;
 
   const result = await streamUI({
-    model: openai('gpt-3.5-turbo'),
+    model: openai('gpt-4o'),
     initial: <SpinnerMessage />,
-    system: `\
-    You are a stock trading conversation bot and you can help users buy stocks, step by step.
-    You and the user can discuss stock prices and the user can adjust the amount of stocks they want to buy, or place an order, in the UI.
-    
-    Messages inside [] means that it's a UI element or a user event. For example:
-    - "[Price of AAPL = 100]" means that an interface of the stock price of AAPL is shown to the user.
-    - "[User has changed the amount of AAPL to 10]" means that the user has changed the amount of AAPL to 10 in the UI.
-    
-    If the user requests purchasing a stock, call \`show_stock_purchase_ui\` to show the purchase UI.
-    If the user just wants the price, call \`show_stock_price\` to show the price.
-    If you want to show trending stocks, call \`list_stocks\`.
-    If you want to show events, call \`get_events\`.
-    If the user wants to sell stock, or complete another impossible task, respond that you are a demo and cannot do that.
-    
-    Besides that, you can also chat with users and do some calculations if needed.`,
+    system: prompt,
     messages: [
       ...aiState.get().messages.map((message: any) => ({
         role: message.role,
         content: message.content,
-        name: message.name
-      }))
+        name: message.name,
+      })),
+      {
+        role: 'system',
+        content: `Here is some relevant information from your documents: ${combinedText}`,
+      },
     ],
+    temperature: 0, // Ensure deterministic responses
     text: ({ content, done, delta }) => {
       if (!textStream) {
-        textStream = createStreamableValue('')
-        textNode = <BotMessage content={textStream.value} />
+        textStream = createStreamableValue('');
+        textNode = <BotMessage content={textStream.value} />;
       }
 
       if (done) {
-        textStream.done()
+        textStream.done();
         aiState.done({
           ...aiState.get(),
           messages: [
@@ -166,322 +246,397 @@ async function submitUserMessage(content: string) {
             {
               id: nanoid(),
               role: 'assistant',
-              content
-            }
-          ]
-        })
+              content,
+            },
+          ],
+        });
       } else {
-        textStream.update(delta)
+        textStream.update(delta);
       }
 
-      return textNode
+      return textNode;
     },
-    tools: {
-      listStocks: {
-        description: 'List three imaginary stocks that are trending.',
-        parameters: z.object({
-          stocks: z.array(
-            z.object({
-              symbol: z.string().describe('The symbol of the stock'),
-              price: z.number().describe('The price of the stock'),
-              delta: z.number().describe('The change in price of the stock')
-            })
-          )
-        }),
-        generate: async function* ({ stocks }) {
-          yield (
-            <BotCard>
-              <StocksSkeleton />
-            </BotCard>
-          )
-
-          await sleep(1000)
-
-          const toolCallId = nanoid()
-
-          aiState.done({
-            ...aiState.get(),
-            messages: [
-              ...aiState.get().messages,
-              {
-                id: nanoid(),
-                role: 'assistant',
-                content: [
-                  {
-                    type: 'tool-call',
-                    toolName: 'listStocks',
-                    toolCallId,
-                    args: { stocks }
-                  }
-                ]
-              },
-              {
-                id: nanoid(),
-                role: 'tool',
-                content: [
-                  {
-                    type: 'tool-result',
-                    toolName: 'listStocks',
-                    toolCallId,
-                    result: stocks
-                  }
-                ]
-              }
-            ]
-          })
-
-          return (
-            <BotCard>
-              <Stocks props={stocks} />
-            </BotCard>
-          )
-        }
-      },
-      showStockPrice: {
-        description:
-          'Get the current stock price of a given stock or currency. Use this to show the price to the user.',
-        parameters: z.object({
-          symbol: z
-            .string()
-            .describe(
-              'The name or symbol of the stock or currency. e.g. DOGE/AAPL/USD.'
-            ),
-          price: z.number().describe('The price of the stock.'),
-          delta: z.number().describe('The change in price of the stock')
-        }),
-        generate: async function* ({ symbol, price, delta }) {
-          yield (
-            <BotCard>
-              <StockSkeleton />
-            </BotCard>
-          )
-
-          await sleep(1000)
-
-          const toolCallId = nanoid()
-
-          aiState.done({
-            ...aiState.get(),
-            messages: [
-              ...aiState.get().messages,
-              {
-                id: nanoid(),
-                role: 'assistant',
-                content: [
-                  {
-                    type: 'tool-call',
-                    toolName: 'showStockPrice',
-                    toolCallId,
-                    args: { symbol, price, delta }
-                  }
-                ]
-              },
-              {
-                id: nanoid(),
-                role: 'tool',
-                content: [
-                  {
-                    type: 'tool-result',
-                    toolName: 'showStockPrice',
-                    toolCallId,
-                    result: { symbol, price, delta }
-                  }
-                ]
-              }
-            ]
-          })
-
-          return (
-            <BotCard>
-              <Stock props={{ symbol, price, delta }} />
-            </BotCard>
-          )
-        }
-      },
-      showStockPurchase: {
-        description:
-          'Show price and the UI to purchase a stock or currency. Use this if the user wants to purchase a stock or currency.',
-        parameters: z.object({
-          symbol: z
-            .string()
-            .describe(
-              'The name or symbol of the stock or currency. e.g. DOGE/AAPL/USD.'
-            ),
-          price: z.number().describe('The price of the stock.'),
-          numberOfShares: z
-            .number()
-            .describe(
-              'The **number of shares** for a stock or currency to purchase. Can be optional if the user did not specify it.'
-            )
-        }),
-        generate: async function* ({ symbol, price, numberOfShares = 100 }) {
-          const toolCallId = nanoid()
-
-          if (numberOfShares <= 0 || numberOfShares > 1000) {
-            aiState.done({
-              ...aiState.get(),
-              messages: [
-                ...aiState.get().messages,
-                {
-                  id: nanoid(),
-                  role: 'assistant',
-                  content: [
-                    {
-                      type: 'tool-call',
-                      toolName: 'showStockPurchase',
-                      toolCallId,
-                      args: { symbol, price, numberOfShares }
-                    }
-                  ]
-                },
-                {
-                  id: nanoid(),
-                  role: 'tool',
-                  content: [
-                    {
-                      type: 'tool-result',
-                      toolName: 'showStockPurchase',
-                      toolCallId,
-                      result: {
-                        symbol,
-                        price,
-                        numberOfShares,
-                        status: 'expired'
-                      }
-                    }
-                  ]
-                },
-                {
-                  id: nanoid(),
-                  role: 'system',
-                  content: `[User has selected an invalid amount]`
-                }
-              ]
-            })
-
-            return <BotMessage content={'Invalid amount'} />
-          } else {
-            aiState.done({
-              ...aiState.get(),
-              messages: [
-                ...aiState.get().messages,
-                {
-                  id: nanoid(),
-                  role: 'assistant',
-                  content: [
-                    {
-                      type: 'tool-call',
-                      toolName: 'showStockPurchase',
-                      toolCallId,
-                      args: { symbol, price, numberOfShares }
-                    }
-                  ]
-                },
-                {
-                  id: nanoid(),
-                  role: 'tool',
-                  content: [
-                    {
-                      type: 'tool-result',
-                      toolName: 'showStockPurchase',
-                      toolCallId,
-                      result: {
-                        symbol,
-                        price,
-                        numberOfShares
-                      }
-                    }
-                  ]
-                }
-              ]
-            })
-
-            return (
-              <BotCard>
-                <Purchase
-                  props={{
-                    numberOfShares,
-                    symbol,
-                    price: +price,
-                    status: 'requires_action'
-                  }}
-                />
-              </BotCard>
-            )
-          }
-        }
-      },
-      getEvents: {
-        description:
-          'List funny imaginary events between user highlighted dates that describe stock activity.',
-        parameters: z.object({
-          events: z.array(
-            z.object({
-              date: z
-                .string()
-                .describe('The date of the event, in ISO-8601 format'),
-              headline: z.string().describe('The headline of the event'),
-              description: z.string().describe('The description of the event')
-            })
-          )
-        }),
-        generate: async function* ({ events }) {
-          yield (
-            <BotCard>
-              <EventsSkeleton />
-            </BotCard>
-          )
-
-          await sleep(1000)
-
-          const toolCallId = nanoid()
-
-          aiState.done({
-            ...aiState.get(),
-            messages: [
-              ...aiState.get().messages,
-              {
-                id: nanoid(),
-                role: 'assistant',
-                content: [
-                  {
-                    type: 'tool-call',
-                    toolName: 'getEvents',
-                    toolCallId,
-                    args: { events }
-                  }
-                ]
-              },
-              {
-                id: nanoid(),
-                role: 'tool',
-                content: [
-                  {
-                    type: 'tool-result',
-                    toolName: 'getEvents',
-                    toolCallId,
-                    result: events
-                  }
-                ]
-              }
-            ]
-          })
-
-          return (
-            <BotCard>
-              <Events props={events} />
-            </BotCard>
-          )
-        }
-      }
-    }
-  })
+  });
 
   return {
     id: nanoid(),
-    display: result.value
-  }
+    display: result.value,
+  };
 }
+
+// async function submitUserMessage(content: string) {
+//   'use server'
+
+//   const aiState = getMutableAIState<typeof AI>()
+
+//   aiState.update({
+//     ...aiState.get(),
+//     messages: [
+//       ...aiState.get().messages,
+//       {
+//         id: nanoid(),
+//         role: 'user',
+//         content
+//       }
+//     ]
+//   })
+
+//   let textStream: undefined | ReturnType<typeof createStreamableValue<string>>
+//   let textNode: undefined | React.ReactNode
+
+//   const result = await streamUI({
+//     model: openai('gpt-4'),
+//     initial: <SpinnerMessage />,
+//     system: `\
+//     You are a family law conversation bot called Motics Legal AI and you can help users with queries related to family law, step by step.
+//     You and the user can discuss various family law topics such as divorce, child custody, alimony, and property division.
+    
+//     Messages inside [] means that it's a UI element or a user event. For example:
+//     - "[User has asked about child custody laws]" means that an interface showing information about child custody laws is shown to the user.
+//     - "[User has requested information on filing for divorce]" means that the user has requested information on the process of filing for divorce.
+    
+//     If the user asks for legal representation or any service beyond providing information, respond that you are a demo and cannot provide such services.
+    
+//     Besides that, you can also chat with users and do some calculations if needed.`,
+//     messages: [
+//       ...aiState.get().messages.map((message: any) => ({
+//         role: message.role,
+//         content: message.content,
+//         name: message.name
+//       }))
+//     ],
+//     text: ({ content, done, delta }) => {
+//       if (!textStream) {
+//         textStream = createStreamableValue('')
+//         textNode = <BotMessage content={textStream.value} />
+//       }
+
+//       if (done) {
+//         textStream.done()
+//         aiState.done({
+//           ...aiState.get(),
+//           messages: [
+//             ...aiState.get().messages,
+//             {
+//               id: nanoid(),
+//               role: 'assistant',
+//               content
+//             }
+//           ]
+//         })
+//       } else {
+//         textStream.update(delta)
+//       }
+
+//       return textNode
+//     },
+//     tools: {
+//       listStocks: {
+//         description: 'List three imaginary stocks that are trending.',
+//         parameters: z.object({
+//           stocks: z.array(
+//             z.object({
+//               symbol: z.string().describe('The symbol of the stock'),
+//               price: z.number().describe('The price of the stock'),
+//               delta: z.number().describe('The change in price of the stock')
+//             })
+//           )
+//         }),
+//         generate: async function* ({ stocks }) {
+//           yield (
+//             <BotCard>
+//               <StocksSkeleton />
+//             </BotCard>
+//           )
+
+//           await sleep(1000)
+
+//           const toolCallId = nanoid()
+
+//           aiState.done({
+//             ...aiState.get(),
+//             messages: [
+//               ...aiState.get().messages,
+//               {
+//                 id: nanoid(),
+//                 role: 'assistant',
+//                 content: [
+//                   {
+//                     type: 'tool-call',
+//                     toolName: 'listStocks',
+//                     toolCallId,
+//                     args: { stocks }
+//                   }
+//                 ]
+//               },
+//               {
+//                 id: nanoid(),
+//                 role: 'tool',
+//                 content: [
+//                   {
+//                     type: 'tool-result',
+//                     toolName: 'listStocks',
+//                     toolCallId,
+//                     result: stocks
+//                   }
+//                 ]
+//               }
+//             ]
+//           })
+
+//           return (
+//             <BotCard>
+//               <Stocks props={stocks} />
+//             </BotCard>
+//           )
+//         }
+//       },
+//       showStockPrice: {
+//         description:
+//           'Get the current stock price of a given stock or currency. Use this to show the price to the user.',
+//         parameters: z.object({
+//           symbol: z
+//             .string()
+//             .describe(
+//               'The name or symbol of the stock or currency. e.g. DOGE/AAPL/USD.'
+//             ),
+//           price: z.number().describe('The price of the stock.'),
+//           delta: z.number().describe('The change in price of the stock')
+//         }),
+//         generate: async function* ({ symbol, price, delta }) {
+//           yield (
+//             <BotCard>
+//               <StockSkeleton />
+//             </BotCard>
+//           )
+
+//           await sleep(1000)
+
+//           const toolCallId = nanoid()
+
+//           aiState.done({
+//             ...aiState.get(),
+//             messages: [
+//               ...aiState.get().messages,
+//               {
+//                 id: nanoid(),
+//                 role: 'assistant',
+//                 content: [
+//                   {
+//                     type: 'tool-call',
+//                     toolName: 'showStockPrice',
+//                     toolCallId,
+//                     args: { symbol, price, delta }
+//                   }
+//                 ]
+//               },
+//               {
+//                 id: nanoid(),
+//                 role: 'tool',
+//                 content: [
+//                   {
+//                     type: 'tool-result',
+//                     toolName: 'showStockPrice',
+//                     toolCallId,
+//                     result: { symbol, price, delta }
+//                   }
+//                 ]
+//               }
+//             ]
+//           })
+
+//           return (
+//             <BotCard>
+//               <Stock props={{ symbol, price, delta }} />
+//             </BotCard>
+//           )
+//         }
+//       },
+//       showStockPurchase: {
+//         description:
+//           'Show price and the UI to purchase a stock or currency. Use this if the user wants to purchase a stock or currency.',
+//         parameters: z.object({
+//           symbol: z
+//             .string()
+//             .describe(
+//               'The name or symbol of the stock or currency. e.g. DOGE/AAPL/USD.'
+//             ),
+//           price: z.number().describe('The price of the stock.'),
+//           numberOfShares: z
+//             .number()
+//             .describe(
+//               'The **number of shares** for a stock or currency to purchase. Can be optional if the user did not specify it.'
+//             )
+//         }),
+//         generate: async function* ({ symbol, price, numberOfShares = 100 }) {
+//           const toolCallId = nanoid()
+
+//           if (numberOfShares <= 0 || numberOfShares > 1000) {
+//             aiState.done({
+//               ...aiState.get(),
+//               messages: [
+//                 ...aiState.get().messages,
+//                 {
+//                   id: nanoid(),
+//                   role: 'assistant',
+//                   content: [
+//                     {
+//                       type: 'tool-call',
+//                       toolName: 'showStockPurchase',
+//                       toolCallId,
+//                       args: { symbol, price, numberOfShares }
+//                     }
+//                   ]
+//                 },
+//                 {
+//                   id: nanoid(),
+//                   role: 'tool',
+//                   content: [
+//                     {
+//                       type: 'tool-result',
+//                       toolName: 'showStockPurchase',
+//                       toolCallId,
+//                       result: {
+//                         symbol,
+//                         price,
+//                         numberOfShares,
+//                         status: 'expired'
+//                       }
+//                     }
+//                   ]
+//                 },
+//                 {
+//                   id: nanoid(),
+//                   role: 'system',
+//                   content: `[User has selected an invalid amount]`
+//                 }
+//               ]
+//             })
+
+//             return <BotMessage content={'Invalid amount'} />
+//           } else {
+//             aiState.done({
+//               ...aiState.get(),
+//               messages: [
+//                 ...aiState.get().messages,
+//                 {
+//                   id: nanoid(),
+//                   role: 'assistant',
+//                   content: [
+//                     {
+//                       type: 'tool-call',
+//                       toolName: 'showStockPurchase',
+//                       toolCallId,
+//                       args: { symbol, price, numberOfShares }
+//                     }
+//                   ]
+//                 },
+//                 {
+//                   id: nanoid(),
+//                   role: 'tool',
+//                   content: [
+//                     {
+//                       type: 'tool-result',
+//                       toolName: 'showStockPurchase',
+//                       toolCallId,
+//                       result: {
+//                         symbol,
+//                         price,
+//                         numberOfShares
+//                       }
+//                     }
+//                   ]
+//                 }
+//               ]
+//             })
+
+//             return (
+//               <BotCard>
+//                 <Purchase
+//                   props={{
+//                     numberOfShares,
+//                     symbol,
+//                     price: +price,
+//                     status: 'requires_action'
+//                   }}
+//                 />
+//               </BotCard>
+//             )
+//           }
+//         }
+//       },
+//       getEvents: {
+//         description:
+//           'List funny imaginary events between user highlighted dates that describe stock activity.',
+//         parameters: z.object({
+//           events: z.array(
+//             z.object({
+//               date: z
+//                 .string()
+//                 .describe('The date of the event, in ISO-8601 format'),
+//               headline: z.string().describe('The headline of the event'),
+//               description: z.string().describe('The description of the event')
+//             })
+//           )
+//         }),
+//         generate: async function* ({ events }) {
+//           yield (
+//             <BotCard>
+//               <EventsSkeleton />
+//             </BotCard>
+//           )
+
+//           await sleep(1000)
+
+//           const toolCallId = nanoid()
+
+//           aiState.done({
+//             ...aiState.get(),
+//             messages: [
+//               ...aiState.get().messages,
+//               {
+//                 id: nanoid(),
+//                 role: 'assistant',
+//                 content: [
+//                   {
+//                     type: 'tool-call',
+//                     toolName: 'getEvents',
+//                     toolCallId,
+//                     args: { events }
+//                   }
+//                 ]
+//               },
+//               {
+//                 id: nanoid(),
+//                 role: 'tool',
+//                 content: [
+//                   {
+//                     type: 'tool-result',
+//                     toolName: 'getEvents',
+//                     toolCallId,
+//                     result: events
+//                   }
+//                 ]
+//               }
+//             ]
+//           })
+
+//           return (
+//             <BotCard>
+//               <Events props={events} />
+//             </BotCard>
+//           )
+//         }
+//       }
+//     }
+//   })
+
+//   console.log('result: ', result);
+//   return {
+//     id: nanoid(),
+//     display: result.value
+//   }
+// }
 
 export type AIState = {
   chatId: string
@@ -509,7 +664,7 @@ export const AI = createAI<AIState, UIState>({
       const aiState = getAIState()
 
       if (aiState) {
-        const uiState = getUIStateFromAIState(aiState)
+        const uiState = getUIStateFromAIState(aiState as Chat)
         return uiState
       }
     } else {

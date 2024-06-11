@@ -6,6 +6,8 @@ import { z } from 'zod'
 import { kv } from '@vercel/kv'
 import { getUser } from '../login/actions'
 import { AuthError } from 'next-auth'
+import { createUserWithEmailAndPassword } from 'firebase/auth'
+import { auth } from '../config/firebaseConfig'
 
 export async function createUser(
   email: string,
@@ -59,17 +61,16 @@ export async function signup(
     })
 
   if (parsedCredentials.success) {
-    const salt = crypto.randomUUID()
-
-    const encoder = new TextEncoder()
-    const saltedPassword = encoder.encode(password + salt)
-    const hashedPasswordBuffer = await crypto.subtle.digest(
-      'SHA-256',
-      saltedPassword
-    )
-    const hashedPassword = getStringFromBuffer(hashedPasswordBuffer)
-
     try {
+      const userCredential = await createUserWithEmailAndPassword(auth, email, password)
+      const user = userCredential.user
+
+      const salt = crypto.randomUUID()
+      const encoder = new TextEncoder()
+      const saltedPassword = encoder.encode(password + salt)
+      const hashedPasswordBuffer = await crypto.subtle.digest('SHA-256', saltedPassword)
+      const hashedPassword = getStringFromBuffer(hashedPasswordBuffer)
+
       const result = await createUser(email, hashedPassword, salt)
 
       if (result.resultCode === ResultCode.UserCreated) {
@@ -82,6 +83,7 @@ export async function signup(
 
       return result
     } catch (error) {
+      console.error('Authentication error: ', error)
       if (error instanceof AuthError) {
         switch (error.type) {
           case 'CredentialsSignin':

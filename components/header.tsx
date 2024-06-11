@@ -1,11 +1,14 @@
 import * as React from 'react'
 import Link from 'next/link'
+import Image from 'next/image'
+import moticsLogo from '@/app/motics-logo.svg'
 
 import { cn } from '@/lib/utils'
 import { auth } from '@/auth'
 import { Button, buttonVariants } from '@/components/ui/button'
 import {
   IconGitHub,
+  IconMotics,
   IconNextChat,
   IconSeparator,
   IconVercel
@@ -29,8 +32,9 @@ async function UserOrLogin() {
         </>
       ) : (
         <Link href="/new" rel="nofollow">
-          <IconNextChat className="size-6 mr-2 dark:hidden" inverted />
-          <IconNextChat className="hidden size-6 mr-2 dark:block" />
+          Motics
+          {/* <IconNextChat className="size-6 mr-2 dark:hidden" inverted />
+          <IconNextChat className="hidden size-6 mr-2 dark:block" /> */}
         </Link>
       )}
       <div className="flex items-center">
@@ -56,7 +60,8 @@ export function Header() {
         </React.Suspense>
       </div>
       <div className="flex items-center justify-end space-x-2">
-        <a
+        <IconMotics src={moticsLogo} alt="Motics" />
+        {/* <a
           target="_blank"
           href="https://github.com/vercel/nextjs-ai-chatbot/"
           rel="noopener noreferrer"
@@ -73,7 +78,7 @@ export function Header() {
           <IconVercel className="mr-2" />
           <span className="hidden sm:block">Deploy to Vercel</span>
           <span className="sm:hidden">Deploy</span>
-        </a>
+        </a> */}
       </div>
     </header>
   )

@@ -37,23 +37,23 @@ export function ChatPanel({
   const exampleMessages = [
     {
       heading: 'What are the',
-      subheading: 'trending memecoins today?',
-      message: `What are the trending memecoins today?`
+      subheading: 'factors that affect an alimony rate?',
+      message: `What are the factors that affect an alimony rate?`
     },
     {
-      heading: 'What is the price of',
-      subheading: '$DOGE right now?',
-      message: 'What is the price of $DOGE right now?'
+      heading: 'How should I',
+      subheading: 'calculate my divorce rate?',
+      message: 'How should I calculate my divorce rate?'
     },
     {
-      heading: 'I would like to buy',
-      subheading: '42 $DOGE',
-      message: `I would like to buy 42 $DOGE`
+      heading: 'I would like to know',
+      subheading: 'the latest update on John Smith\'s case.',
+      message: `I would like to know the latest update on John Smith's case.`
     },
     {
-      heading: 'What are some',
-      subheading: `recent events about $DOGE?`,
-      message: `What are some recent events about $DOGE?`
+      heading: 'Can you provide',
+      subheading: `a summary of the case?`,
+      message: `Can you provide a summary of the case?`
     }
   ]
 

@@ -13,10 +13,11 @@ export const metadata = {
     ? new URL(`https://${process.env.VERCEL_URL}`)
     : undefined,
   title: {
-    default: 'Next.js AI Chatbot',
-    template: `%s - Next.js AI Chatbot`
+    default: 'Motics Legal AI',
+    template: `%s - Your AI assistant for family law`
   },
-  description: 'An AI-powered chatbot template built with Next.js and Vercel.',
+  description: 'Motics Legal AI is a family law AI assistant that can help you with your family law questions.',
+
   icons: {
     icon: '/favicon.ico',
     shortcut: '/favicon-16x16.png',
@@ -56,7 +57,7 @@ export default function RootLayout({ children }: RootLayoutProps) {
             <Header />
             <main className="flex flex-col flex-1 bg-muted/50">{children}</main>
           </div>
-          <TailwindIndicator />
+          {/* <TailwindIndicator /> */}
         </Providers>
       </body>
     </html>
