@@ -182,7 +182,6 @@ function IconGitHub({ className, ...props }: React.ComponentProps<'svg'>) {
 
 function IconMotics({
   className,
-  size = '20',
   src,
   alt,
   ...props
@@ -191,7 +190,7 @@ function IconMotics({
     <Image
       src={moticsLogo}
       alt="Motics"
-      className={cn(`size-${size}`, className)}
+      className={cn(`size-20`, className)}
       {...props}
     />
   )
